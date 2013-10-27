@@ -4,8 +4,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/tombooth/masterslave"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +23,7 @@ var (
 	doneEndpoint  = flag.String("done", "/done", "Path of done endpoint")
 	host          = flag.String("host", "REQUIRED", "Host of the service e.g. http://foo.com")
 	authToken     = flag.String("authToken", "REQUIRED", "Used to verify the requests from twilio")
+	amqpURI       = flag.String("amqpURI", "amqp://guest:guest@localhost:5672/", "AMQP URI")
 )
 
 func sortKeys(in url.Values) []string {
@@ -77,12 +80,32 @@ func startHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func recordingHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "POST" && validRequest(r) {
-		r.ParseForm()
-		fmt.Printf("%s: %s\n", strings.Join(r.Form["From"], ""), strings.Join(r.Form["RecordingUrl"], ""))
-	} else {
-		fmt.Println("Invalid recording done request")
+type Recording struct {
+	From string
+	Url string
+}
+
+func recordingHandler(toSlaves chan []byte) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && validRequest(r) {
+			r.ParseForm()
+			recording := Recording {
+				From: strings.Join(r.Form["From"], ""),
+				Url: strings.Join(r.Form["RecordingUrl"], ""),
+			}
+
+			fmt.Printf("%s: %s\n", recording.From, recording.Url)
+
+			bytes, err := json.Marshal(recording)
+
+			if err != nil {
+				fmt.Println("Failed to marshall recording to json")
+			} else {
+				toSlaves <- bytes
+			}
+		} else {
+			fmt.Println("Invalid recording done request")
+		}
 	}
 }
 
@@ -100,8 +123,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	toSlaves, err := masterslave.Master(*amqpURI, "voicemail")
+
+	if err != nil {
+		fmt.Println("Master failed to startup:", err)
+	}
+
 	http.HandleFunc(*startEndpoint, startHandler)
-	http.HandleFunc(*doneEndpoint, recordingHandler)
+	http.HandleFunc(*doneEndpoint, recordingHandler(toSlaves))
 
 	fmt.Printf("Started www server on %d, listening...\n", *port)
 
