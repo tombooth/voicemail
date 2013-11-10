@@ -82,6 +82,7 @@ func startHandler(w http.ResponseWriter, r *http.Request) {
 
 type Recording struct {
 	From string
+	To string
 	Url string
 }
 
@@ -91,6 +92,7 @@ func recordingHandler(toSlaves chan []byte) func(http.ResponseWriter, *http.Requ
 			r.ParseForm()
 			recording := Recording {
 				From: strings.Join(r.Form["From"], ""),
+				To: strings.Join(r.Form["To"], ""),
 				Url: strings.Join(r.Form["RecordingUrl"], ""),
 			}
 
